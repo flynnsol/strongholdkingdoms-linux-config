@@ -2,10 +2,13 @@
 
 **Symptoms this fixes**
 
-- Launches to a black screen / black map, heavy lag and crackling audio
+- Launches to a black screen / black map, heavy lag and stuttering audio
 - Dialogs (e.g. "Your village was lost… Continue") can't be clicked, keyboard does nothing
 - Popup: *"This application could not be started. You must enable the .NET Framework…"*
 - Random crashes a few minutes in, especially when opening Mail / Factions panels
+- Crash a few seconds after the launcher/game window appears (`winmm` in the backtrace)
+
+> **Known limitation: the game runs without sound.** Its audio playback crashes Wine's `winmm` sooner or later, so this guide disables audio for the prefix (step 6). Everything else works.
 
 **Root causes (short version)**
 
@@ -17,7 +20,7 @@
 | Can't click anything, map stays black | Wine's built-in D3DX9 text rendering is so slow it monopolises the UI thread | Install native `d3dx9_42` |
 | Instant crash on Mail/Factions (`gdiplus/region.c` assertion) | Bug in Wine's built-in GDI+ | Install native `gdiplus` |
 | Input lag from accessibility queries | GE-Proton's Xalia gamepad/accessibility helper hammers the WinForms UI | `PROTON_USE_XALIA=0` |
-| Crackling audio (optional, only if you hear it) | Audio buffer too small | `PULSE_LATENCY_MSEC=60` |
+| Crash shortly after startup, backtrace in `winmm` → `ucrtbase` | The game frees sound buffers while Wine's `waveOut` thread is still playing them | Disable audio in the prefix |
 
 Tested with **GE-Proton11-9** (Wine-staging 11). Other recent GE-Proton builds will probably work the same way.
 
@@ -134,7 +137,21 @@ done
 
 If the versioned folder doesn't exist yet, the launcher hasn't downloaded the client. Go back to the launch in step 2.
 
-## 6. Launch options
+## 6. Disable audio for the game
+
+The game's sound playback crashes Wine's `winmm` audio thread, sometimes only occasionally and sometimes on every launch. Bigger audio buffers (`PULSE_LATENCY_MSEC`) and switching Wine to ALSA don't fix it reliably, and ALSA can freeze the UI. Turning Wine's audio driver off for this prefix stops the crash completely. You lose sound, but only for this game.
+
+```bash
+protontricks -c 'wine reg add "HKCU\Software\Wine\Drivers" /v Audio /d "" /f' 47410
+```
+
+To try sound again later (e.g. after a game or Proton update), remove the setting:
+
+```bash
+protontricks -c 'wine reg delete "HKCU\Software\Wine\Drivers" /v Audio /f' 47410
+```
+
+## 7. Launch options
 
 Steam → game → *Properties → General → Launch Options*:
 
@@ -142,13 +159,13 @@ Steam → game → *Properties → General → Launch Options*:
 PROTON_USE_XALIA=0 %command%
 ```
 
-*Optional:* if the audio crackles, add `PULSE_LATENCY_MSEC=60` at the front (try `90` if it still crackles). Don't leave `PROTON_LOG=1` on during normal play, because it slows the game down noticeably.
+Don't leave `PROTON_LOG=1` on during normal play, because it slows the game down noticeably.
 
 ---
 
 ## Keeping it working
 
-- **Don't switch Proton versions.** A version change makes Proton update the prefix, and that can overwrite the native DLLs. If you do switch, redo steps 2–5.
+- **Don't switch Proton versions.** A version change makes Proton update the prefix, and that can overwrite the native DLLs. If you do switch, redo steps 2–6.
 - **The .NET popup comes back after a game update:** the client moved to a new version folder. Re-run the `for d in …` loop from step 5.
 - **The .NET popup comes back after "Verify integrity of game files":** Steam restored the launcher's config. Re-run `add_v4_startup "$GAME/StrongholdKingdoms.exe.config"`.
 - **Back up the working prefix** so you can restore it quickly:
@@ -166,3 +183,5 @@ grep -nE 'wine: Unhandled|page fault on|_wassert' ~/steam-47410.log | tail
 ```
 
 An `err:msvcrt:_wassert` line names the Wine DLL that failed (e.g. `dlls/gdiplus/...`). Installing the native version of that component with protontricks is usually the fix.
+
+If the backtrace (search the log for `Backtrace:`) starts in `winmm`, audio is still enabled. Re-run the command from step 6.
